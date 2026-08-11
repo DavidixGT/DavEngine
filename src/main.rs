@@ -1,6 +1,7 @@
 mod renderer;
 mod material;
-mod mesh;
+mod triangle; // 🟢 Abstract geometry layout
+mod mesh; 
 mod game;
 mod engine; 
 

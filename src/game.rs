@@ -1,6 +1,6 @@
-// 🟢 FIXED: Removed the invalid crate::triangle import
 use crate::renderer::TriangleRenderer;
 use crate::material::Shader;
+use crate::triangle::Triangle;
 use crate::mesh::Mesh;
 use std::time::Instant;
 
@@ -9,44 +9,43 @@ pub trait Game {
     fn update(&mut self, renderer: &TriangleRenderer, dt: f32);
 }
 
-// 1. Design your custom variable payload structure
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct MyCustomVariables {
     pub current_time: f32,
     pub player_speed: f32,
     pub global_scale: f32,
-    pub padding: f32, // Structs should be padded to multiples of 16 bytes for GPU safety alignment
+    pub padding: f32,
 }
 
 pub struct MyGame {
     custom_shader: Shader,
     start_time: Instant,
-    player_ship: Mesh,
-    enemy_ship: Mesh,
+    player_ship_mesh: Mesh,
+    enemy_ship_mesh: Mesh,
 }
 
 impl Game for MyGame {
     fn init(renderer: &TriangleRenderer) -> Self {
         let shader_code = include_str!("shader.wgsl");
-        
-        // Calculate the physical size of our struct in bytes
         let uniform_size = std::mem::size_of::<MyCustomVariables>() as u64;
-
-        // 2. Pass the byte calculation requirement rule down during compilation setup
         let custom_shader = Shader::new(renderer, shader_code, uniform_size);
         let start_time = Instant::now();
 
-        let player_ship = Mesh::new([[0.0, 0.5], [-0.3, 0.0], [0.3, 0.0]]);
-        let enemy_ship = Mesh::new([[0.0, -0.5], [-0.2, -0.2], [0.2, -0.2]]);
+        // 1. Describe vectors using the triangle layout
+        let player_tri = Triangle::new([[0.0, 0.5], [-0.3, 0.0], [0.3, 0.0]]);
+        let enemy_tri = Triangle::new([[0.0, -0.5], [-0.2, -0.2], [0.2, -0.2]]);
 
-        Self { custom_shader, start_time, player_ship, enemy_ship }
+        // 2. Commit them to high-performance GPU Mesh resources
+        let player_ship_mesh = Mesh::from_triangle(renderer, &player_tri);
+        let enemy_ship_mesh = Mesh::from_triangle(renderer, &enemy_tri);
+
+        Self { custom_shader, start_time, player_ship_mesh, enemy_ship_mesh }
     }
 
     fn update(&mut self, renderer: &TriangleRenderer, _dt: f32) {
         let elapsed = self.start_time.elapsed().as_secs_f32();
 
-        // 3. Assemble your structural properties dynamically from your loop context
         let current_frame_data = MyCustomVariables {
             current_time: elapsed,
             player_speed: 4.5,
@@ -54,12 +53,11 @@ impl Game for MyGame {
             padding: 0.0,
         };
 
-        // 🎯 ONE CLEAN COMMAND: Updates all variable allocations inside the shader instantly
         renderer.update_shader_buffer(&self.custom_shader, &current_frame_data);
 
         renderer.render_scene(&self.custom_shader, |ctx| {
-            self.player_ship.draw(ctx);
-            self.enemy_ship.draw(ctx);
+            self.player_ship_mesh.draw(ctx);
+            self.enemy_ship_mesh.draw(ctx);
         });
     }
 }

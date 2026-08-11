@@ -1,26 +1,30 @@
 use crate::renderer::RenderContext;
+use crate::triangle::Triangle;
 use wgpu::util::DeviceExt;
 
 pub struct Mesh {
-    pub positions: [[f32; 2]; 3],
+    vertex_buffer: wgpu::Buffer,
+    vertex_count: u32,
 }
 
 impl Mesh {
-    pub fn new(positions: [[f32; 2]; 3]) -> Self {
-        Self { positions }
-    }
-
-    // 🎯 DRAW IN SCENE: Binds this specific mesh data inside the running frame pass
-    pub fn draw<'a>(&self, ctx: &mut RenderContext<'a>) {
-        // Build the geometry buffer data block on the hardware
-        let vertex_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Mesh Vector Buffer"),
-            contents: bytemuck::cast_slice(&self.positions),
+    // Ingests an abstract Triangle primitive and allocates it in VRAM
+    pub fn from_triangle(renderer: &crate::renderer::TriangleRenderer, triangle: &Triangle) -> Self {
+        let vertex_buffer = renderer.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Mesh Vertex Buffer"),
+            contents: bytemuck::cast_slice(&triangle.positions),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // Attach vectors to the shared frame stream and issue the draw call
-        ctx.render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-        ctx.render_pass.draw(0..3, 0..1);
+        Self {
+            vertex_buffer,
+            vertex_count: 3,
+        }
+    }
+
+    // High-utility render loop draw abstraction
+    pub fn draw<'a>(&self, ctx: &mut RenderContext<'a>) {
+        ctx.render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        ctx.render_pass.draw(0..self.vertex_count, 0..1);
     }
 }
