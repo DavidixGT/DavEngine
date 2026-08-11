@@ -1,6 +1,6 @@
+use crate::material::Shader;
 use std::sync::Arc;
 use winit::window::Window;
-use crate::material::Material;
 
 pub struct TriangleRenderer {
     pub surface: wgpu::Surface<'static>,
@@ -51,12 +51,16 @@ impl TriangleRenderer {
         }
     }
 
-    pub fn update_material_time(&self, material: &Material, current_time: f32) {
-        self.queue.write_buffer(&material.uniform_buffer, 0, bytemuck::cast_slice(&[current_time]));
+    pub fn update_shader_buffer<T: bytemuck::Pod>(&self, shader: &Shader, data: &T) {
+        self.queue.write_buffer(
+            &shader.uniform_buffer, 
+            0, 
+            bytemuck::bytes_of(data) // Casts the entire layout structure into raw binary bytes automatically
+        );
     }
 
     // 🎯 FLICKER FIX: Run everything inside a custom execution block closure
-    pub fn render_scene<F>(&self, material: &Material, draw_calls: F) 
+    pub fn render_scene<F>(&self, material: &Shader, draw_calls: F) 
     where
         F: for<'a> FnOnce(&mut RenderContext<'a>),
     {

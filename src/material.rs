@@ -1,30 +1,32 @@
 use crate::renderer::TriangleRenderer;
 
-pub struct Material {
+pub struct Shader {
     pub render_pipeline: wgpu::RenderPipeline,
     pub uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl Material {
-    pub fn new(renderer: &TriangleRenderer, shader_source: &str) -> Self {
+impl Shader {
+    // 🎯 GENERIC INITIALIZATION: Now takes uniform_size in bytes
+    pub fn new(renderer: &TriangleRenderer, shader_source: &str, uniform_size: u64) -> Self {
         let shader = renderer.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
+            label: Some("Custom Dynamic Shader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
+        // Allocate exactly the amount of bytes requested by the calling scope code configuration
         let uniform_buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Uniform Buffer"),
-            size: 4, 
+            label: Some("Generic Shader Uniform Buffer"),
+            size: uniform_size, 
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let bind_group_layout = renderer.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Bind Group Layout"),
+            label: Some("Shader Uniform Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, // Visible to both vertex and pixel stages!
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -35,7 +37,7 @@ impl Material {
         });
 
         let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind Group"),
+            label: Some("Shader Uniform Bind Group"),
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() }],
         });
@@ -55,11 +57,7 @@ impl Material {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        offset: 0,
-                        shader_location: 0,
-                        format: wgpu::VertexFormat::Float32x2,
-                    }],
+                    attributes: &[wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 }],
                 }], 
                 compilation_options: Default::default() 
             },
