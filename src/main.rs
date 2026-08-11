@@ -1,12 +1,14 @@
-mod triangle;
 mod renderer;
 mod material;
-mod mesh; // ✅ Register your new file
+mod mesh;
 mod game;
+mod engine; 
 
-use triangle::EngineRunner;
+// 🟢 Bind the concrete game state type out of game.rs
 use game::MyGame;
+use engine::EngineRunner;
 
 fn main() {
+    // 🟢 Point the hardware engine directly to your active game module
     EngineRunner::run::<MyGame>();
 }

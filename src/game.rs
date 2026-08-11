@@ -1,8 +1,13 @@
-use crate::triangle::Game;
+// 🟢 FIXED: Removed the invalid crate::triangle import
 use crate::renderer::TriangleRenderer;
 use crate::material::Shader;
 use crate::mesh::Mesh;
 use std::time::Instant;
+
+pub trait Game {
+    fn init(renderer: &TriangleRenderer) -> Self;
+    fn update(&mut self, renderer: &TriangleRenderer, dt: f32);
+}
 
 // 1. Design your custom variable payload structure
 #[repr(C)]
