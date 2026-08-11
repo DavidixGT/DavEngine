@@ -1,0 +1,11 @@
+[package]
+name = "wgpu_triangle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+wgpu = "24.0"      # The core WebGPU wrapper
+winit = "0.29"     # Handles creating the desktop window
+pollster = "0.4"
+bytemuck = { version = "1.16", features = ["derive"] }
