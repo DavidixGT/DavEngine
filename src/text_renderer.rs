@@ -1,5 +1,5 @@
+use crate::font::Font;
 use crate::renderer::{RenderContext, TriangleRenderer};
-use wgpu::util::DeviceExt;
 
 /// One textured vertex: clip-space position + atlas UV.
 #[repr(C)]
@@ -9,8 +9,12 @@ struct TextVertex {
     uv: [f32; 2],
 }
 
-/// Glyph cell size in clip-space units at scale 1.0.
-const CELL_SIZE: f32 = 0.015;
+/// Rasterize the TTF at this many pixels per em. Larger = crisper glyphs,
+/// but uses more atlas space.
+const TTF_PIXELS_PER_EM: f32 = 64.0;
+
+/// Default em-size of the font in clip-space units (the viewport spans -1..1).
+const DEFAULT_SCALE: f32 = 0.1;
 
 pub struct TextRenderer {
     device: wgpu::Device,
@@ -18,7 +22,7 @@ pub struct TextRenderer {
     render_pipeline: wgpu::RenderPipeline,
     color_buffer: wgpu::Buffer,
     color_bind_group: wgpu::BindGroup,
-    font_bind_group: wgpu::BindGroup,
+    font: Font,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity_bytes: u64,
     vertex_offset: u64,
@@ -27,7 +31,10 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(renderer: &TriangleRenderer) -> Self {
+    /// Build a text renderer that rasterizes the given TTF font bytes
+    /// (e.g. `include_bytes!("assets/fonts/myfont.ttf")`). The font atlas is
+    /// created immediately, so the byte slice may be dropped afterwards.
+    pub fn from_bytes(renderer: &TriangleRenderer, ttf: &[u8]) -> Self {
         let device = renderer.device.clone();
         let queue = renderer.queue.clone();
 
@@ -51,32 +58,12 @@ impl TextRenderer {
             }],
         });
 
-        // ---- Bind group 1: font atlas texture + sampler ----
-        let font_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Font Atlas Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        // ---- TTF font atlas (owned; binds at group 1) ----
+        let font = Font::from_ttf(&device, &queue, ttf, TTF_PIXELS_PER_EM);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Text Pipeline Layout"),
-            bind_group_layouts: &[&color_layout, &font_layout],
+            bind_group_layouts: &[&color_layout, font.bind_group_layout()],
             push_constant_ranges: &[],
         });
 
@@ -124,66 +111,6 @@ impl TextRenderer {
             cache: None,
         });
 
-        // ---- Font atlas: 8x1024, one 8x8 glyph cell per ASCII character ----
-        // font8x8 stores each glyph as 8 row bytes; bit 0 of a byte = leftmost pixel.
-        let mut texture_bytes = vec![0u8; 8 * 1024];
-        for ch in 0u8..128 {
-            // BASIC_UNICODE is a [FontUnicode; 128] array; element .1 is the [u8; 8] glyph.
-            let glyph = font8x8::BASIC_UNICODE[ch as usize].1;
-            for row in 0..8 {
-                for col in 0..8 {
-                    let on = (glyph[row] >> col) & 1;
-                    texture_bytes[(ch as usize * 8 + row) * 8 + col] = if on == 1 { 255 } else { 0 };
-                }
-            }
-        }
-
-        let texture = device.create_texture_with_data(
-            &queue,
-            &wgpu::TextureDescriptor {
-                label: Some("Font Atlas Texture"),
-                size: wgpu::Extent3d {
-                    width: 8,
-                    height: 1024,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::LayerMajor,
-            &texture_bytes,
-        );
-
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Font Atlas Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        let font_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Font Atlas Bind Group"),
-            layout: &font_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-
         // ---- Text color uniform (starts white) ----
         let color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Text Color Uniform Buffer"),
@@ -220,13 +147,22 @@ impl TextRenderer {
             render_pipeline,
             color_buffer,
             color_bind_group,
-            font_bind_group,
+            font,
             vertex_buffer,
             vertex_capacity_bytes: initial_capacity_bytes,
             vertex_offset: 0,
             color: [1.0, 1.0, 1.0, 1.0],
-            scale: 1.0,
+            scale: DEFAULT_SCALE,
         }
+    }
+
+    /// Load a TTF font from a file and build a text renderer from it.
+    /// The path is resolved relative to the current working directory
+    /// (the project root when running `cargo run`).
+    pub fn from_file(renderer: &TriangleRenderer, path: &str) -> Self {
+        let bytes = std::fs::read(path)
+            .unwrap_or_else(|e| panic!("[TextRenderer] failed to read font '{path}': {e}"));
+        Self::from_bytes(renderer, &bytes)
     }
 
     /// Call once at the start of each frame, before any `draw_string` calls.
@@ -242,54 +178,60 @@ impl TextRenderer {
         self.queue.write_buffer(&self.color_buffer, 0, bytemuck::bytes_of(&self.color));
     }
 
-    /// Global glyph scale. 1.0 = default cell size. Larger = bigger text.
+    /// Font em-size in clip-space units. 1.0 = the text spans the full
+    /// viewport height. Typical HUD text is 0.05..0.15.
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale.max(0.001);
     }
 
-    /// Draw a line of text. `(start_x, start_y)` is the top-left of the first
-    /// glyph in clip-space coordinates (y increases upward). Supports `\n`.
+    /// Draw a line of text. `(start_x, start_y)` is the pen position of the
+    /// first glyph's baseline in clip-space coordinates (y increases upward).
+    /// Supports `\n`.
     pub fn draw_string<'a>(&mut self, ctx: &mut RenderContext<'a>, text: &str, start_x: f32, start_y: f32) {
-        let mut verts: Vec<TextVertex> = Vec::new();
-        let cell = CELL_SIZE * self.scale;
-        let char_w = cell * 8.0;
-        let line_h = cell * 10.0;
+        // Conversion factor from rasterized font pixels to clip-space units.
+        let px_to_clip = self.scale / self.font.pixels_per_em();
+        let line_h = self.scale * 1.2;
 
-        let mut cursor_x = start_x;
-        let mut cursor_y = start_y;
+        let mut verts: Vec<TextVertex> = Vec::new();
+        let mut pen_x = start_x;
+        let mut pen_y = start_y;
 
         for ch in text.chars() {
             if ch == '\n' {
-                cursor_x = start_x;
-                cursor_y -= line_h;
-                continue;
-            }
-            let ascii = ch as u32;
-            if ascii > 127 {
+                pen_x = start_x;
+                pen_y -= line_h;
                 continue;
             }
 
-            // Half-texel inset UVs so nearest sampling never bleeds between glyphs.
-            let u0 = 0.5 / 8.0;
-            let u1 = 7.5 / 8.0;
-            let v0 = (ascii as f32 * 8.0 + 0.5) / 1024.0;
-            let v1 = (ascii as f32 * 8.0 + 7.5) / 1024.0;
+            let glyph = self.font.glyph(ch);
+            let w = glyph.width as f32;
+            let h = glyph.height as f32;
 
-            let x0 = cursor_x;
-            let y0 = cursor_y; // top (clip y = up)
-            let x1 = cursor_x + char_w;
-            let y1 = cursor_y - cell * 8.0; // bottom
+            if w > 0.0 && h > 0.0 {
+                // Bitmap top-left corner in clip space. The glyph bitmap spans
+                // [bearing_x, bearing_x + w] x [bearing_y + h, bearing_y]
+                // relative to the baseline, with fontdue's y-up convention.
+                let x_left = pen_x + glyph.bearing_x * px_to_clip;
+                let x_right = x_left + w * px_to_clip;
+                let y_top = pen_y + (glyph.bearing_y + h) * px_to_clip;
+                let y_bottom = pen_y + glyph.bearing_y * px_to_clip;
 
-            verts.extend_from_slice(&[
-                TextVertex { position: [x0, y0], uv: [u0, v0] },
-                TextVertex { position: [x1, y0], uv: [u1, v0] },
-                TextVertex { position: [x0, y1], uv: [u0, v1] },
-                TextVertex { position: [x1, y0], uv: [u1, v0] },
-                TextVertex { position: [x1, y1], uv: [u1, v1] },
-                TextVertex { position: [x0, y1], uv: [u0, v1] },
-            ]);
+                let u0 = glyph.uv[0];
+                let v0 = glyph.uv[1];
+                let u1 = glyph.uv[2];
+                let v1 = glyph.uv[3];
 
-            cursor_x += char_w;
+                verts.extend_from_slice(&[
+                    TextVertex { position: [x_left, y_top], uv: [u0, v0] },
+                    TextVertex { position: [x_right, y_top], uv: [u1, v0] },
+                    TextVertex { position: [x_left, y_bottom], uv: [u0, v1] },
+                    TextVertex { position: [x_right, y_top], uv: [u1, v0] },
+                    TextVertex { position: [x_right, y_bottom], uv: [u1, v1] },
+                    TextVertex { position: [x_left, y_bottom], uv: [u0, v1] },
+                ]);
+            }
+
+            pen_x += glyph.advance * px_to_clip;
         }
 
         if verts.is_empty() {
@@ -319,7 +261,7 @@ impl TextRenderer {
 
         ctx.render_pass.set_pipeline(&self.render_pipeline);
         ctx.render_pass.set_bind_group(0, &self.color_bind_group, &[]);
-        ctx.render_pass.set_bind_group(1, &self.font_bind_group, &[]);
+        ctx.render_pass.set_bind_group(1, self.font.atlas_bind_group(), &[]);
         ctx.render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(region));
         ctx.render_pass.draw(0..verts.len() as u32, 0..1);
     }

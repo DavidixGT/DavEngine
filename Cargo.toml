@@ -9,4 +9,5 @@ wgpu = "24.0"      # The core WebGPU wrapper
 winit = "0.29"     # Handles creating the desktop window
 pollster = "0.4"
 bytemuck = { version = "1.16", features = ["derive"] }
-font8x8 = "0.3"    # Public-domain 8x8 bitmap font for the text renderer
+font8x8 = "0.3"    # Public-domain 8x8 bitmap font fallback
+fontdue = "0.9"    # TrueType/OpenType parsing + rasterization for .ttf text
