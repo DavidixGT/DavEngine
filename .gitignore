@@ -1,1 +1,5 @@
-/target
+# Ignore build artifacts and build directories
+target/
+
+# Ignore local MCP configurations containing API keys and private tokens
+.vscode/mcp.json

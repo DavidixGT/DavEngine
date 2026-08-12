@@ -2,6 +2,7 @@ use crate::renderer::TriangleRenderer;
 use crate::material::Shader;
 use crate::triangle::Triangle;
 use crate::mesh::Mesh;
+use crate::text_renderer::TextRenderer;
 use std::time::Instant;
 
 pub trait Game {
@@ -23,6 +24,7 @@ pub struct MyGame {
     start_time: Instant,
     player_ship_mesh: Mesh,
     enemy_ship_mesh: Mesh,
+    text_renderer: TextRenderer,
 }
 
 impl Game for MyGame {
@@ -40,7 +42,10 @@ impl Game for MyGame {
         let player_ship_mesh = Mesh::from_triangle(renderer, &player_tri);
         let enemy_ship_mesh = Mesh::from_triangle(renderer, &enemy_tri);
 
-        Self { custom_shader, start_time, player_ship_mesh, enemy_ship_mesh }
+        // 🔤 Text renderer: bitmap font atlas + per-draw color/scale
+        let text_renderer = TextRenderer::new(renderer);
+
+        Self { custom_shader, start_time, player_ship_mesh, enemy_ship_mesh, text_renderer }
     }
 
     fn update(&mut self, renderer: &TriangleRenderer, _dt: f32) {
@@ -58,6 +63,19 @@ impl Game for MyGame {
         renderer.render_scene(&self.custom_shader, |ctx| {
             self.player_ship_mesh.draw(ctx);
             self.enemy_ship_mesh.draw(ctx);
+
+            // 🔤 Overlay some HUD text in the same pass
+            self.text_renderer.set_color(1.0, 1.0, 0.0, 1.0);
+            self.text_renderer.set_scale(1.5);
+            self.text_renderer.draw_string(ctx, "WGPU ENGINE", -0.9, 0.85);
+            self.text_renderer.set_color(1.0, 1.0, 1.0, 1.0);
+            self.text_renderer.set_scale(1.0);
+            self.text_renderer.draw_string(
+                ctx,
+                &format!("FPS demo | t = {:.2}s", elapsed),
+                -0.9,
+                0.75,
+            );
         });
     }
 }

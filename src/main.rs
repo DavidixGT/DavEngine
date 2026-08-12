@@ -4,6 +4,7 @@ mod triangle; // 🟢 Abstract geometry layout
 mod mesh; 
 mod game;
 mod engine; 
+mod text_renderer;
 
 // 🟢 Bind the concrete game state type out of game.rs
 use game::MyGame;
