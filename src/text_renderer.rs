@@ -20,7 +20,8 @@ pub struct TextRenderer {
     color_bind_group: wgpu::BindGroup,
     font_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
-    vertex_capacity: u32,
+    vertex_capacity_bytes: u64,
+    vertex_offset: u64,
     color: [f32; 4],
     scale: f32,
 }
@@ -201,10 +202,14 @@ impl TextRenderer {
         });
 
         // ---- Dynamic vertex buffer (grows on demand) ----
-        let initial_capacity: u32 = 1024;
+        // Multiple draw_string calls per frame share this one buffer. Each draw
+        // gets its own private region (see vertex_offset) so that a later draw
+        // never overwrites the vertices of an earlier draw.
+        let vertex_stride = std::mem::size_of::<TextVertex>() as u64;
+        let initial_capacity_bytes = 1024 * vertex_stride;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Text Vertex Buffer"),
-            size: initial_capacity as u64 * std::mem::size_of::<TextVertex>() as u64,
+            size: initial_capacity_bytes,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -217,10 +222,18 @@ impl TextRenderer {
             color_bind_group,
             font_bind_group,
             vertex_buffer,
-            vertex_capacity: initial_capacity,
+            vertex_capacity_bytes: initial_capacity_bytes,
+            vertex_offset: 0,
             color: [1.0, 1.0, 1.0, 1.0],
             scale: 1.0,
         }
+    }
+
+    /// Call once at the start of each frame, before any `draw_string` calls.
+    /// Resets the per-draw vertex cursor so each draw gets its own region of
+    /// the shared vertex buffer instead of overwriting earlier draws.
+    pub fn begin_frame(&mut self) {
+        self.vertex_offset = 0;
     }
 
     /// Set the text color (RGBA, 0..1) applied to all subsequent draws.
@@ -283,23 +296,31 @@ impl TextRenderer {
             return;
         }
 
-        let needed = verts.len() as u32;
-        if needed > self.vertex_capacity {
-            self.vertex_capacity = needed;
+        let vertex_stride = std::mem::size_of::<TextVertex>() as u64;
+        let bytes = verts.len() as u64 * vertex_stride;
+
+        // Grow the buffer when this draw (plus previous draws this frame) won't
+        // fit. Earlier draws keep referencing the old buffer, which wgpu keeps
+        // alive until the queue finishes with it.
+        if self.vertex_offset + bytes > self.vertex_capacity_bytes {
+            self.vertex_capacity_bytes = (self.vertex_offset + bytes).next_power_of_two();
             self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Text Vertex Buffer (resized)"),
-                size: self.vertex_capacity as u64 * std::mem::size_of::<TextVertex>() as u64,
+                size: self.vertex_capacity_bytes,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
         }
 
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+        // Write into this draw's private region, then advance the cursor.
+        self.queue.write_buffer(&self.vertex_buffer, self.vertex_offset, bytemuck::cast_slice(&verts));
+        let region = self.vertex_offset..self.vertex_offset + bytes;
+        self.vertex_offset += bytes;
 
         ctx.render_pass.set_pipeline(&self.render_pipeline);
         ctx.render_pass.set_bind_group(0, &self.color_bind_group, &[]);
         ctx.render_pass.set_bind_group(1, &self.font_bind_group, &[]);
-        ctx.render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        ctx.render_pass.draw(0..needed, 0..1);
+        ctx.render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(region));
+        ctx.render_pass.draw(0..verts.len() as u32, 0..1);
     }
 }

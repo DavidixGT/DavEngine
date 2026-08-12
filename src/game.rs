@@ -65,8 +65,9 @@ impl Game for MyGame {
             self.enemy_ship_mesh.draw(ctx);
 
             // 🔤 Overlay some HUD text in the same pass
+            self.text_renderer.begin_frame();
             self.text_renderer.set_color(1.0, 1.0, 0.0, 1.0);
-            self.text_renderer.set_scale(1.5);
+            self.text_renderer.set_scale(1.0);
             self.text_renderer.draw_string(ctx, "WGPU ENGINE", -0.9, 0.85);
             self.text_renderer.set_color(1.0, 1.0, 1.0, 1.0);
             self.text_renderer.set_scale(1.0);
