@@ -1,4 +1,5 @@
 use crate::font::Font;
+use crate::game::TextObject;
 use crate::renderer::{RenderContext, TriangleRenderer};
 
 /// One textured vertex: clip-space position + atlas UV.
@@ -182,6 +183,18 @@ impl TextRenderer {
     /// viewport height. Typical HUD text is 0.05..0.15.
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale.max(0.001);
+    }
+
+    /// Draw a batch of plain text objects. Takes `&mut self` plus a separate
+    /// `&[&TextObject]` slice so callers can borrow their text objects and this
+    /// renderer as disjoint fields (avoids whole-struct borrows). The objects
+    /// are plain owned structs, so the latest field state is drawn.
+    pub fn draw_objects<'a>(&mut self, ctx: &mut RenderContext<'a>, objects: &[&TextObject]) {
+        for obj in objects {
+            self.set_color(obj.color[0], obj.color[1], obj.color[2], obj.color[3]);
+            self.set_scale(obj.scale);
+            self.draw_string(ctx, &obj.text, obj.x, obj.y);
+        }
     }
 
     /// Draw a line of text. `(start_x, start_y)` is the pen position of the
